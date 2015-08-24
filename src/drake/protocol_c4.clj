@@ -3,22 +3,11 @@
    https://github.com/Factual/c4"
   (:require [c4.core :as c4]
             [clojure.string :as str]
-            [clojure.java.io :as io]
-            [cemerick.pomegranate :as pom]
-            [sosueme.conf :as conf]
+            [clojure.tools.logging :refer [debug]]
+            [slingshot.slingshot :refer [throw+]]
             [fs.core :as fs]
-            [factql.core :as factql]
-            [c4.apis.foursquare :as foursquare]
-            [c4.apis.yelp :as yelp]
-            [c4.apis.google :as google]
-            [sosueme.conf :as conf]
-            [fs.core :as fs]
-            [retry.core :as retry])
-  (:use [clojure.tools.logging :only [debug]]
-        [slingshot.slingshot :only [throw+]]
-        factql.core
-        drake.protocol
-        [drake-interface.core :only [Protocol]]))
+            [drake.protocol :as protocol]
+            [drake-interface.core :refer [Protocol]]))
 
 
 ;;
@@ -55,23 +44,6 @@
   [rows]
   (c4/write-file! *in-file* rows *out-file* *columns*))
 
-;; Handles resolving specified dependencies at runtime, loading them unto
-;; the classpath.
-;; Example use, in a Drake/c4 step:
-;;
-;; (load-deps! [factual/sosueme "0.0.13"]
-;;             [factual/juiceful "1.1.3"])
-;; (require '[sosueme.druid :as druid])
-;; (require '[juiceful.utils :as utils])
-(def REPOS {"factual"
-            {:url "http://maven.corp.factual.com/nexus/content/groups/public"
-             :update :always}})
-(defmacro load-deps! [& deps]
-  (let [coords (vec deps)]
-    `(pom/add-dependencies :coordinates '~coords
-                           :repositories REPOS)))
-
-
 ;;
 ;; Wire a Drake step to c4
 ;;
@@ -86,27 +58,27 @@
     (when (not= output-cnt 1)
       (throw+ {:msg "c4: your c4 steps need exactly 1 output"}))))
 
-(defn dot-factual-file [name]
-  (-> (fs/home)
-      (fs/file ".factual")
-      (fs/file name)))
+(defmacro with-ns
+  "Uses ns-resolve to pull in the specified namespace(s) and functions.
+   This is handy for the on-the-fly eval of c4 step code, i.e. when we
+   need to make extra stuff available.
 
-(defn dot-factual-file-exists? [name]
-  (fs/exists? (dot-factual-file name)))
+   First argument is a hash-map, each key is a namespace and each val is
+   the set of functions needed from that namespace.
 
-(defn init-if! [service auth-fn]
-  (let [auth-file (str service "-auth.yaml")]
-    (if (dot-factual-file-exists? auth-file)
-      (do
-        (auth-fn (conf/dot-factual auth-file))
-        (debug "c4: Found auth for" service))
-      (debug "c4: Did not find" auth-file "; not initiating" service))))
-
-(defn do-auths! []
-  (init-if! "factual"     #(factql/init! %))
-  (init-if! "yelp"        #(yelp/init! %))
-  (init-if! "foursquare"  #(foursquare/init! %))
-  (init-if! "google"      #(google/init! %)))
+   Example c4 step code that uses this:
+   out.json <- in.json [c4row]
+     (with-ns {clojure.data [diff]}
+       (first (diff (row \"aColumn\"))))"
+ [needed-functions & body]
+  `(do
+     ~@(for [namespace (keys needed-functions)]
+         `(require '~namespace))
+     (let [~@(apply concat
+                    (for [[namespace vars] needed-functions
+                          v vars]
+                      [v `@(ns-resolve '~namespace '~v)]))]
+       (do ~@body))))
 
 (defn add-ns [clj-str]
   (str "(ns drake.protocol-c4)\n" clj-str))
@@ -180,7 +152,7 @@
         out-file (get-in step [:vars "OUTPUT"])]
   (assert-single-files step)
   (files! in-file out-file)
-  (do-auths!)))
+  ))
 
 (defn exec-or-passthru
   "Runs f on step if step has non-empty commands, otherwise does a pass-through
@@ -197,11 +169,11 @@
 
 (defn- register-c4-protocol!
   [[protocol-name func]]
-  (register-protocols! protocol-name
-                       (reify Protocol
-                         (cmds-required? [_] false)
-                         (run [_ step]
-                           (exec-or-passthru step func)))))
+  (protocol/register-protocols! protocol-name
+                                (reify Protocol
+                                  (cmds-required? [_] false)
+                                  (run [_ step]
+                                    (exec-or-passthru step func)))))
 
 (dorun (map register-c4-protocol! [["c4" exec-c4]
                                    ["c4row" exec-row-xform]
