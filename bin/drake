@@ -17,7 +17,7 @@ if [ "$HTTP_CLIENT" = "" ]; then
     fi
 fi
 
-DRAKE_VERSION=1.0.1
+DRAKE_VERSION=1.0.3
 
 DRAKE_SCRIPT_URL=https://raw.githubusercontent.com/Factual/drake/master/bin/drake
 DRAKE_URL=https://github.com/Factual/drake/releases/download/$DRAKE_VERSION/drake.jar
@@ -42,11 +42,9 @@ fi
 # Tries to include local hadoop library on classpath for HDFS support.
 # If Hadoop client is not installed locally, defaults to built-in hadoop version.
 # If you don't need HDFS support with your Drake workflows, none of this matters.
-if [ -z ${HADOOP_CLASSPATH:+x} ]; then
-  if [[ `which hadoop` ]]; then
-    HADOOP_CLASSPATH=`hadoop classpath 2>/dev/null`
-    HADOOP_VERSION=`hadoop version | head -1`
-  fi
+if [[ `which hadoop` ]]; then
+  HADOOP_CLASSPATH=`hadoop classpath 2>/dev/null`
+  HADOOP_VERSION=`hadoop version | head -1`
 fi
 
 if [ "$1" = "--hadoop-version" ]; then
@@ -60,7 +58,7 @@ fi
 
 function build_jar {
   echo "Using DRAKE_HOME: $DRAKE_HOME"
-  DRAKE_JAR=$DRAKE_HOME/target/drake.jar
+  DRAKE_JAR=${DRAKE_JAR:-$DRAKE_HOME/target/drake.jar}
   if [[ ! -f $DRAKE_JAR ]]; then
     echo ""
     echo "========= UBERJAR COMPILING ========="
@@ -84,8 +82,8 @@ if [ ! -z ${DRAKE_HOME:+x} ] && [ -d $DRAKE_HOME ] && [ -f "$DRAKE_HOME/project.
   build_jar
 else
   DRAKE_HOME=~/.drakerc
-  mkdir -p $DRAKE_HOME/jar
-  DRAKE_JAR=$DRAKE_HOME/jar/drake-$DRAKE_VERSION-standalone.jar
+  DRAKE_JAR=${DRAKE_JAR:-$DRAKE_HOME/jar/drake-$DRAKE_VERSION-standalone.jar}
+  mkdir -p $(dirname $DRAKE_JAR)
   if [ ! -f $DRAKE_JAR ]; then
     echo "Downloading drake jar for version $DRAKE_VERSION..."
     echo ""
